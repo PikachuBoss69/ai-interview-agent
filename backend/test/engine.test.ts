@@ -105,6 +105,31 @@ class WeakAnswerEvaluator implements AnswerEvaluator {
   }
 }
 
+class MediumAnswerEvaluator implements AnswerEvaluator {
+  async evaluate(context: EvaluationContext): Promise<AnswerEvaluation> {
+    return {
+      evaluationId: "medium-evaluation",
+      evidence: [
+        {
+          id: "medium-evidence",
+          questionId: context.question.id,
+          topic: context.question.targetArea,
+          competencies: {},
+          observations: ["Test evidence."],
+          missing: [],
+          contradictions: [],
+          confidence: "medium",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      missing: [],
+      contradictions: [],
+      confidence: "medium",
+      evaluatedAt: new Date().toISOString(),
+    };
+  }
+}
+
 class StrongAnswerEvaluator implements AnswerEvaluator {
   async evaluate(context: EvaluationContext): Promise<AnswerEvaluation> {
     return {
@@ -243,6 +268,31 @@ async function run() {
   assert(weakState!.turns[1].question?.id !== weakState!.turns[0].question?.id, "the follow-up question should not reuse the original question ID");
   assert(weakState!.turns[1].question?.targetArea === InterviewStage.Establish, "the follow-up question should remain relevant to the investigation target area");
   assert(weakTurn.question?.id === weakState!.turns[1].question?.id, "the returned turn should be the new pending question");
+
+  const mediumAnswerStore = new InMemorySessionStore();
+  const mediumAnswerEngine = new InterviewEngine(mediumAnswerStore, new MockQuestionGenerator(), new MediumAnswerEvaluator());
+  await mediumAnswerEngine.start(candidate, "medium-answer-test");
+  const mediumTurn = await mediumAnswerEngine.processAnswer("medium-answer-test", "some medium answer");
+  const mediumState = mediumAnswerStore.get("medium-answer-test");
+  assert(!!mediumTurn, "medium-confidence path should return a turn");
+  assert(!!mediumState, "medium-confidence session should be persisted");
+  assert(mediumState!.turns[0].evaluation?.confidence === "medium", "evaluation confidence should be medium");
+  assert((mediumState!.turns[0].evaluation?.evidence.length ?? 0) > 0, "medium-confidence evaluation should contain evidence");
+  assert(!!mediumState!.turns[0].decision, "medium-confidence path should create a decision");
+  assert(mediumState!.turns[0].decision?.action !== "CONTINUE_INVESTIGATION", "medium confidence with evidence should not be treated as continue-investigation");
+  assert(mediumState!.turns[0].decision?.action === "ADVANCE_STAGE", "medium confidence with evidence should advance normally");
+  assert(mediumState!.turns[0].decision?.action === "ADVANCE_STAGE" && mediumState!.turns[0].decision?.stage === InterviewStage.Build, "next question should correspond to the next stage");
+  assert(mediumState!.turns[0].answer?.content === "some medium answer", "previous turn should contain the candidate answer");
+  assert(mediumState!.turns[0].evaluation !== undefined, "previous turn should contain the evaluation");
+  assert(mediumState!.turns[0].decision !== undefined, "previous turn should contain the decision");
+  assert(mediumState!.turns[1].question !== undefined, "next turn should contain a generated question");
+  assert(mediumState!.turns[1].answer === undefined, "next turn should not contain an answer yet");
+  assert(mediumState!.turns[1].evaluation === undefined, "next turn should not contain an evaluation yet");
+  assert(mediumState!.turns[1].decision === undefined, "next turn should not contain a decision yet");
+  assert(mediumState!.status === "active", "interview should remain active after medium-confidence progression");
+  assert(mediumTurn.turnNumber === 2, "returned turn should be the new pending turn");
+  assert(mediumTurn.question?.id === mediumState!.turns[1].question?.id, "returned turn should be the pending next question");
+  assert(mediumTurn.question?.targetArea === InterviewStage.Build, "returned next question should correspond to the next stage");
 
   const strongAnswerStore = new InMemorySessionStore();
   const strongAnswerEngine = new InterviewEngine(strongAnswerStore, new MockQuestionGenerator(), new StrongAnswerEvaluator(), new AdvancingStageDecisionEngine());
