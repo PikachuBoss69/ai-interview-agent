@@ -1,7 +1,8 @@
 import { InterviewEngine, MockQuestionGenerator, QuestionContext, QuestionGenerator } from "../src/interview/engine";
 import { DecisionContext, DecisionEngine } from "../src/interview/decision";
 import { InMemorySessionStore } from "../src/interview/session-store";
-import { Candidate, Decision, GeneratedQuestion, InterviewStage, Investigation, InterviewState } from "../src/interview/types";
+import { AnswerEvaluator, EvaluationContext } from "../src/interview/evaluator";
+import { AnswerEvaluation, Candidate, Decision, GeneratedQuestion, InterviewStage, Investigation, InterviewState } from "../src/interview/types";
 
 function assert(cond: boolean, msg?: string) {
   if (!cond) throw new Error(msg || "assertion failed");
@@ -87,6 +88,44 @@ class AdvancingStageDecisionEngine implements DecisionEngine {
     return {
       action: "ADVANCE_STAGE",
       stage: stageOrder[stageIndex],
+    };
+  }
+}
+
+class WeakAnswerEvaluator implements AnswerEvaluator {
+  async evaluate(context: EvaluationContext): Promise<AnswerEvaluation> {
+    return {
+      evaluationId: `weak-evaluation-${context.question.id}`,
+      evidence: [],
+      missing: ["Insufficient evidence for testing."],
+      contradictions: [],
+      confidence: "low",
+      evaluatedAt: new Date().toISOString(),
+    };
+  }
+}
+
+class StrongAnswerEvaluator implements AnswerEvaluator {
+  async evaluate(context: EvaluationContext): Promise<AnswerEvaluation> {
+    return {
+      evaluationId: `strong-evaluation-${context.question.id}`,
+      evidence: [
+        {
+          id: `evidence-${context.question.id}`,
+          questionId: context.question.id,
+          topic: "general",
+          competencies: {},
+          observations: ["Substantive response"],
+          missing: [],
+          contradictions: [],
+          confidence: "medium",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      missing: [],
+      contradictions: [],
+      confidence: "high",
+      evaluatedAt: new Date().toISOString(),
     };
   }
 }
@@ -181,6 +220,39 @@ async function run() {
   assert(investigationState!.investigations.length === 1, "continue-investigation should create an investigation entry");
   assert(investigationState!.investigations[0].targetArea === InterviewStage.Establish, "investigation target area should be preserved");
   assert(investigationState!.turns[1].question?.targetArea === InterviewStage.Establish, "continue-investigation should keep the next question relevant to the investigation target area");
+
+  const weakAnswerStore = new InMemorySessionStore();
+  const weakAnswerEngine = new InterviewEngine(weakAnswerStore, new MockQuestionGenerator(), new WeakAnswerEvaluator(), undefined);
+  await weakAnswerEngine.start(candidate, "weak-answer-test");
+  const weakTurn = await weakAnswerEngine.processAnswer("weak-answer-test", "some test answer");
+  const weakState = weakAnswerStore.get("weak-answer-test");
+  assert(!!weakTurn, "weak-answer path should return a turn");
+  assert(weakTurn.decision === undefined, "the returned pending turn should not contain the completed decision");
+  assert(!!weakState, "weak-answer session should be persisted");
+  assert(weakState!.investigations.length === 1, "weak evaluation should persist an investigation");
+  assert(weakState!.investigations[0].targetArea === InterviewStage.Establish, "investigation target area should match the current question");
+  assert(weakState!.status === "active", "interview should remain active after a weak-evidence investigation");
+  assert(weakState!.stage === InterviewStage.Establish, "continue-investigation should not advance the stage");
+  assert(weakState!.turns[0].answer?.content === "some test answer", "the previous turn should contain the candidate answer");
+  assert(weakState!.turns[0].evaluation !== undefined, "the previous turn should contain the evaluation");
+  assert(weakState!.turns[0].decision?.action === "CONTINUE_INVESTIGATION", "the previous turn should contain the decision");
+  assert(weakState!.turns[1].question !== undefined, "the new turn should contain a question");
+  assert(weakState!.turns[1].answer === undefined, "the new turn should not contain an answer");
+  assert(weakState!.turns[1].evaluation === undefined, "the new turn should not contain an evaluation");
+  assert(weakState!.turns[1].decision === undefined, "the new turn should not contain a decision");
+  assert(weakState!.turns[1].question?.id !== weakState!.turns[0].question?.id, "the follow-up question should not reuse the original question ID");
+  assert(weakState!.turns[1].question?.targetArea === InterviewStage.Establish, "the follow-up question should remain relevant to the investigation target area");
+  assert(weakTurn.question?.id === weakState!.turns[1].question?.id, "the returned turn should be the new pending question");
+
+  const strongAnswerStore = new InMemorySessionStore();
+  const strongAnswerEngine = new InterviewEngine(strongAnswerStore, new MockQuestionGenerator(), new StrongAnswerEvaluator(), new AdvancingStageDecisionEngine());
+  await strongAnswerEngine.start(candidate, "strong-answer-test");
+  const strongTurn = await strongAnswerEngine.processAnswer("strong-answer-test", "some strong answer");
+  const strongState = strongAnswerStore.get("strong-answer-test");
+  assert(!!strongTurn, "strong-answer path should return a turn");
+  assert(strongTurn.question?.targetArea === InterviewStage.Build, "strong evaluation should advance to a new stage question");
+  assert(!!strongState, "strong-answer session should be persisted");
+  assert(strongState!.stage === InterviewStage.Build, "strong evaluation should advance the stage");
 
   const decisionStateStore = new InMemorySessionStore();
   const decisionStateEngine = new InterviewEngine(decisionStateStore, new SequenceQuestionGenerator());
