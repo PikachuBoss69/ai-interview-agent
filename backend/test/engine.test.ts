@@ -71,6 +71,26 @@ class RecordingDecisionEngine implements DecisionEngine {
   }
 }
 
+class AdvancingStageDecisionEngine implements DecisionEngine {
+  async decide(context: DecisionContext): Promise<Decision> {
+    const stageOrder = [
+      InterviewStage.Establish,
+      InterviewStage.Build,
+      InterviewStage.Extend,
+      InterviewStage.Break,
+      InterviewStage.Disambiguate,
+      InterviewStage.Optimize,
+      InterviewStage.Operate,
+      InterviewStage.Synthesize,
+    ];
+    const stageIndex = Math.min(context.state.questionCount, stageOrder.length - 1);
+    return {
+      action: "ADVANCE_STAGE",
+      stage: stageOrder[stageIndex],
+    };
+  }
+}
+
 async function run() {
   const store = new InMemorySessionStore();
   const engine = new InterviewEngine(store, new MockQuestionGenerator());
@@ -84,6 +104,8 @@ async function run() {
   assert(turn.turnNumber === 1, "first turn should be turn 1");
   assert(!!turn.question, "turn should include a generated question");
   assert(turn.question?.targetArea === "Establish", "first question should target Establish");
+  assert(turn.question?.text.includes("real system") ?? false, "first question should be an Establish-stage question");
+  assert((turn.question?.curriculumDays?.length ?? 0) > 0, "generated question should carry curriculum day metadata");
 
   const persisted = store.get("session-1");
   assert(!!persisted, "session should be stored");
@@ -112,6 +134,21 @@ async function run() {
     await engine.start(candidate, "   ");
   }, "invalid sessionId should throw");
 
+  const generatorSequenceStore = new InMemorySessionStore();
+  const generatorSequenceEngine = new InterviewEngine(generatorSequenceStore, new MockQuestionGenerator(), undefined, new AdvancingStageDecisionEngine());
+  await generatorSequenceEngine.start(candidate, "generator-sequence-session");
+  const firstGeneratedTurn = await generatorSequenceEngine.processAnswer("generator-sequence-session", "I can explain my approach clearly.");
+  const secondGeneratedTurn = await generatorSequenceEngine.processAnswer("generator-sequence-session", "I can explain my approach differently.");
+  const generatorSequenceState = generatorSequenceStore.get("generator-sequence-session");
+  assert(!!generatorSequenceState, "generator sequence session should be persisted");
+  assert(firstGeneratedTurn.question?.text !== turn.question?.text, "subsequent questions should not all have identical text");
+  assert(secondGeneratedTurn.question?.text !== firstGeneratedTurn.question?.text, "generated questions should vary across turns");
+  assert(new Set(generatorSequenceState!.askedQuestions).size === generatorSequenceState!.askedQuestions.length, "generated question IDs should be unique");
+  assert(generatorSequenceState!.askedQuestions.every((questionId) => questionId.includes("generator-sequence-session-question")), "generated question IDs should be derived from the session");
+  assert((generatorSequenceState!.turns[1].question?.curriculumDays?.length ?? 0) > 0, "subsequent questions should carry curriculum metadata");
+  assert(generatorSequenceState!.turns[1].question?.targetArea === InterviewStage.Build, "advancing stage should produce a stage-appropriate question");
+  assert(generatorSequenceState!.turns[2].question?.targetArea === InterviewStage.Extend, "later turns should continue to produce stage-appropriate questions");
+
   const sequenceStore = new InMemorySessionStore();
   const sequenceEngine = new InterviewEngine(sequenceStore, new SequenceQuestionGenerator());
   await sequenceEngine.start(candidate, "sequence-session");
@@ -134,6 +171,16 @@ async function run() {
   assert(sequenceState!.turns[1].answer === undefined, "Q2 should remain pending without an answer");
   assert(sequenceState!.turns[1].evaluation === undefined, "Q2 should not have an evaluation yet");
   assert(sequenceState!.turns[1].decision === undefined, "Q2 should not have a decision yet");
+
+  const investigationStore = new InMemorySessionStore();
+  const investigationEngine = new InterviewEngine(investigationStore, new MockQuestionGenerator(), undefined, new RecordingDecisionEngine());
+  await investigationEngine.start(candidate, "investigation-session");
+  await investigationEngine.processAnswer("investigation-session", "I can explain my approach clearly.");
+  const investigationState = investigationStore.get("investigation-session");
+  assert(!!investigationState, "investigation session should be persisted");
+  assert(investigationState!.investigations.length === 1, "continue-investigation should create an investigation entry");
+  assert(investigationState!.investigations[0].targetArea === InterviewStage.Establish, "investigation target area should be preserved");
+  assert(investigationState!.turns[1].question?.targetArea === InterviewStage.Establish, "continue-investigation should keep the next question relevant to the investigation target area");
 
   const decisionStateStore = new InMemorySessionStore();
   const decisionStateEngine = new InterviewEngine(decisionStateStore, new SequenceQuestionGenerator());

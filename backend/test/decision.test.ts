@@ -15,7 +15,7 @@ function makeState(overrides: Partial<InterviewState> = {}): InterviewState {
     uncertainties: [],
     investigations: [],
     coveredTopics: [],
-    coveredCurriculumDays: [1, 2, 3],
+    coveredCurriculumDays: [1],
     askedQuestions: ["q-1"],
     messages: [],
     turns: [],
@@ -63,32 +63,46 @@ async function run() {
   const candidate: Candidate = { id: "cand-1", displayName: "Ada" };
   const question = makeQuestion();
 
-  const earlyState = makeState({ questionCount: 7, coveredCurriculumDays: [1, 2, 3] });
-  const earlyDecision = await engine.decide({ candidate, state: earlyState, question, answerEvaluation: makeEvaluation("medium", 1) });
-  assert(earlyDecision.action !== "FINISH", "fewer than 8 questions cannot finish");
+  const earlyLowCoverageState = makeState({ questionCount: 1, coveredCurriculumDays: [1] });
+  const earlyLowCoverageDecision = await engine.decide({
+    candidate,
+    state: earlyLowCoverageState,
+    question,
+    answerEvaluation: makeEvaluation("medium", 1),
+  });
+  assert(earlyLowCoverageDecision.action === "ADVANCE_STAGE", "Q1 with medium confidence should not investigate merely because coverage is low");
 
-  const maxState = makeState({ questionCount: 12, coveredCurriculumDays: [1, 2, 3, 4] });
-  const maxDecision = await engine.decide({ candidate, state: maxState, question, answerEvaluation: makeEvaluation("medium", 1) });
-  assert(maxDecision.action === "FINISH", "12 questions must finish");
-
-  const lowCoverageState = makeState({ questionCount: 8, coveredCurriculumDays: [1, 2, 3] });
-  const lowCoverageDecision = await engine.decide({ candidate, state: lowCoverageState, question, answerEvaluation: makeEvaluation("high", 1) });
-  assert(lowCoverageDecision.action !== "FINISH", "fewer than 4 curriculum days cannot finish");
-
-  const weakState = makeState({ questionCount: 8, coveredCurriculumDays: [1, 2, 3, 4] });
+  const weakState = makeState({ questionCount: 1, coveredCurriculumDays: [1] });
   const weakDecision = await engine.decide({ candidate, state: weakState, question, answerEvaluation: makeEvaluation("low", 0) });
-  assert(weakDecision.action === "CONTINUE_INVESTIGATION", "weak/low-confidence evaluation should trigger investigation");
+  assert(weakDecision.action === "CONTINUE_INVESTIGATION", "low-confidence Q1 should trigger investigation");
   assert(weakDecision.action === "CONTINUE_INVESTIGATION" && weakDecision.investigation.targetArea === question.targetArea, "investigation target area should follow the current question");
 
-  const normalState = makeState({ questionCount: 8, coveredCurriculumDays: [1, 2, 3, 4] });
-  const normalDecision = await engine.decide({ candidate, state: normalState, question, answerEvaluation: makeEvaluation("medium", 1) });
-  assert(normalDecision.action === "ADVANCE_STAGE", "normal continuation should advance stage");
+  const underMinimumState = makeState({ questionCount: 7, coveredCurriculumDays: [1, 2, 3] });
+  const underMinimumDecision = await engine.decide({ candidate, state: underMinimumState, question, answerEvaluation: makeEvaluation("medium", 1) });
+  assert(underMinimumDecision.action === "ADVANCE_STAGE", "fewer than 8 questions should advance or explore rather than finish");
 
-  const originalStateSnapshot = JSON.stringify(normalState);
-  await engine.decide({ candidate, state: normalState, question, answerEvaluation: makeEvaluation("medium", 1) });
-  assert(JSON.stringify(normalState) === originalStateSnapshot, "decision engine must not mutate interview state");
+  const newInvestigationState = makeState({ questionCount: 7, coveredCurriculumDays: [1, 2, 3, 4] });
+  const newInvestigationDecision = await engine.decide({ candidate, state: newInvestigationState, question, answerEvaluation: makeEvaluation("medium", 1) });
+  assert(newInvestigationDecision.action === "NEW_INVESTIGATION", "fewer than 8 questions with sufficient evidence should explore another area");
 
-  const discriminated: Decision = normalDecision;
+  const atMinimumState = makeState({ questionCount: 8, coveredCurriculumDays: [1, 2, 3] });
+  const atMinimumDecision = await engine.decide({ candidate, state: atMinimumState, question, answerEvaluation: makeEvaluation("medium", 1) });
+  assert(atMinimumDecision.action !== "FINISH", "8 questions with only 3 curriculum days cannot finish");
+  assert(atMinimumDecision.action === "NEW_INVESTIGATION", "after the minimum length, insufficient curriculum coverage should continue by exploring another area");
+
+  const strongState = makeState({ questionCount: 8, coveredCurriculumDays: [1, 2, 3, 4] });
+  const strongDecision = await engine.decide({ candidate, state: strongState, question, answerEvaluation: makeEvaluation("high", 1) });
+  assert(strongDecision.action === "ADVANCE_STAGE", "sufficient evidence after the minimum length should advance stage");
+
+  const maxState = makeState({ questionCount: 12, coveredCurriculumDays: [1, 2] });
+  const maxDecision = await engine.decide({ candidate, state: maxState, question, answerEvaluation: makeEvaluation("medium", 1) });
+  assert(maxDecision.action === "FINISH", "12 questions must finish even if curriculum coverage is still low");
+
+  const originalStateSnapshot = JSON.stringify(strongState);
+  await engine.decide({ candidate, state: strongState, question, answerEvaluation: makeEvaluation("high", 1) });
+  assert(JSON.stringify(strongState) === originalStateSnapshot, "decision engine must not mutate interview state");
+
+  const discriminated: Decision = strongDecision;
   if (discriminated.action === "ADVANCE_STAGE") {
     assert(discriminated.stage === InterviewStage.Build, "normal continuation should advance to the next stage");
   } else {

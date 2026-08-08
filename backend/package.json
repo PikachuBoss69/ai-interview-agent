@@ -2,13 +2,13 @@
   "name": "ai-interview-agent-backend",
   "version": "0.1.0",
   "private": true,
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "lint": "echo \"No lint configured\"",
-    "test": "npm run build && node dist/test/session-store.test.js && node dist/test/engine.test.js && node dist/test/evaluator.test.js && node dist/test/decision.test.js"
+    "test": "npm run build && node dist/test/session-store.test.js && node dist/test/engine.test.js && node dist/test/evaluator.test.js && node dist/test/decision.test.js && node dist/test/api.test.js"
   },
   "engines": {
     "node": ">=16"

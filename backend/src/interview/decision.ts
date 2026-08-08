@@ -20,27 +20,35 @@ export class DevelopmentDecisionEngine implements DecisionEngine {
     }
 
     if (state.questionCount < 8) {
-      if (state.coveredCurriculumDays.length < 4) {
-        return this.continueInvestigation(question.targetArea, state.questionCount);
-      }
       if (answerEvaluation.confidence === "low" || answerEvaluation.evidence.length === 0) {
         return this.continueInvestigation(question.targetArea, state.questionCount);
       }
-      return this.newInvestigation(question.targetArea, state.questionCount);
+
+      if (state.coveredCurriculumDays.length >= 4) {
+        return this.newInvestigation(question.targetArea, state.questionCount);
+      }
+
+      return {
+        action: "ADVANCE_STAGE",
+        stage: this.nextStage(state.stage),
+      };
     }
 
-    if (state.coveredCurriculumDays.length < 4) {
-      return this.continueInvestigation(question.targetArea, state.questionCount);
+    if (state.coveredCurriculumDays.length >= 4) {
+      if (answerEvaluation.confidence === "low" || answerEvaluation.evidence.length === 0) {
+        return this.continueInvestigation(question.targetArea, state.questionCount);
+      }
+      return {
+        action: "ADVANCE_STAGE",
+        stage: this.nextStage(state.stage),
+      };
     }
 
     if (answerEvaluation.confidence === "low" || answerEvaluation.evidence.length === 0) {
       return this.continueInvestigation(question.targetArea, state.questionCount);
     }
 
-    return {
-      action: "ADVANCE_STAGE",
-      stage: this.nextStage(state.stage),
-    };
+    return this.newInvestigation(question.targetArea, state.questionCount);
   }
 
   private continueInvestigation(targetArea: string, questionCount: number): Decision {

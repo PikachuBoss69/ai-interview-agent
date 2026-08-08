@@ -23,15 +23,95 @@ export interface QuestionGenerator {
 export class MockQuestionGenerator implements QuestionGenerator {
   async generate(context: QuestionContext): Promise<GeneratedQuestion> {
     const now = new Date().toISOString();
+    const stage = context.state.stage;
+    const investigationTargetArea = context.state.investigations.at(-1)?.targetArea;
+    const targetArea = investigationTargetArea ?? stage;
+    const templates = this.getTemplates();
+    const template = templates[stage] ?? templates[InterviewStage.Establish];
+    const text = this.renderTemplate(template.text, context.candidate.displayName, targetArea);
+    const curriculumDays = template.curriculumDays;
+    const baseId = `${context.state.sessionId}-question-${context.state.questionCount + 1}`;
+    const id = this.ensureUniqueQuestionId(baseId, context.state.askedQuestions);
+
     return {
-      id: `${context.state.sessionId}-question-${context.state.questionCount + 1}`,
-      text: `Let's start with an Establish-stage question: ${context.candidate.displayName ? `Candidate ${context.candidate.displayName}` : "Candidate"}, describe a real system you have built or debugged and explain your approach.`,
-      targetArea: "Establish",
-      curriculumDays: [1],
-      purpose: "Establish baseline understanding and invite a concrete example.",
-      difficulty: "easy",
+      id,
+      text,
+      targetArea,
+      curriculumDays,
+      purpose: template.purpose,
+      difficulty: template.difficulty,
       createdAt: now,
     };
+  }
+
+  private getTemplates(): Record<InterviewStage, { text: string; curriculumDays: number[]; purpose: string; difficulty: "easy" | "medium" | "hard" }> {
+    return {
+      [InterviewStage.Establish]: {
+        text: "{{candidate}}, describe a real system you have built or debugged and explain your approach.",
+        curriculumDays: [1],
+        purpose: "Establish baseline understanding and invite a concrete example.",
+        difficulty: "easy",
+      },
+      [InterviewStage.Build]: {
+        text: "How would you implement or extend a feature for {{targetArea}} in a production system?",
+        curriculumDays: [2],
+        purpose: "Explore implementation and design choices.",
+        difficulty: "medium",
+      },
+      [InterviewStage.Extend]: {
+        text: "If the requirements changed mid-delivery for {{targetArea}}, how would your design or implementation adapt?",
+        curriculumDays: [2, 3],
+        purpose: "Probe adaptation to changing constraints.",
+        difficulty: "medium",
+      },
+      [InterviewStage.Break]: {
+        text: "A deployment for {{targetArea}} is failing in a real environment. How would you investigate and isolate the problem?",
+        curriculumDays: [3],
+        purpose: "Probe diagnostic and debugging reasoning.",
+        difficulty: "medium",
+      },
+      [InterviewStage.Disambiguate]: {
+        text: "You saw ambiguity in the {{targetArea}} scenario. What would you clarify first and why?",
+        curriculumDays: [3, 4],
+        purpose: "Probe uncertainty handling and clarification.",
+        difficulty: "medium",
+      },
+      [InterviewStage.Optimize]: {
+        text: "How would you optimize the {{targetArea}} experience for latency, cost, or reliability without sacrificing correctness?",
+        curriculumDays: [4],
+        purpose: "Probe optimization and trade-off reasoning.",
+        difficulty: "hard",
+      },
+      [InterviewStage.Operate]: {
+        text: "Walk through how you would operate {{targetArea}} in production, including monitoring, incidents, and rollback strategy.",
+        curriculumDays: [4, 5],
+        purpose: "Probe operational readiness and production thinking.",
+        difficulty: "hard",
+      },
+      [InterviewStage.Synthesize]: {
+        text: "Bring together your reasoning about {{targetArea}} into a production-ready plan with risks, trade-offs, and rollout considerations.",
+        curriculumDays: [5],
+        purpose: "Probe synthesis and integrated decision-making.",
+        difficulty: "hard",
+      },
+    };
+  }
+
+  private renderTemplate(text: string, displayName: string | undefined, targetArea: string): string {
+    const candidateLabel = displayName ? `Candidate ${displayName}` : "Candidate";
+    return text
+      .replace("{{candidate}}", candidateLabel)
+      .replace("{{targetArea}}", targetArea);
+  }
+
+  private ensureUniqueQuestionId(baseId: string, askedQuestions: string[]): string {
+    let candidateId = baseId;
+    let suffix = 1;
+    while (askedQuestions.includes(candidateId)) {
+      candidateId = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    return candidateId;
   }
 }
 
