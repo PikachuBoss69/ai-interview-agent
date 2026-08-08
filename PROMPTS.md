@@ -2477,5 +2477,286 @@ Report:
 * build result
 * test result
 
+# Prompt #019 — Integrate the Frontend with the Interview API
 
+We now have a working backend HTTP API for the interview engine.
 
+Before changing anything, inspect:
+
+- `PRODUCT.md`
+- `AGENTS.md`
+- `INTERVIEW_ENGINE.md`
+- `frontend/src/`
+- `frontend/package.json`
+- `backend/src/api/interview-controller.ts`
+- `backend/src/app.ts`
+
+Also inspect the existing frontend UI and determine how it currently represents:
+
+- the candidate/interview start state
+- the current question
+- the candidate's answer
+- loading state
+- errors
+- interview completion
+
+### Goal
+
+Connect the existing frontend UI to:
+
+```http
+POST /api/interview
+```
+
+# Prompt #020 — Configure Frontend API Proxy
+
+The frontend interview client from Prompt #019 is implemented, but the development setup currently sends browser requests directly from the Vite origin to `http://localhost:3000`.
+
+This creates a cross-origin development problem because:
+
+- Vite frontend normally runs on `http://localhost:5173`
+- backend runs on `http://localhost:3000`
+
+We do NOT want to add CORS middleware to the backend for this development setup.
+
+Instead, configure the Vite development server to proxy `/api` requests to the backend.
+
+## First inspect
+
+Read:
+
+- `frontend/package.json`
+- `frontend/src/App.tsx`
+- `frontend/index.html`
+- any existing `frontend/vite.config.*`
+- `backend/src/app.ts`
+- `backend/src/index.ts`
+
+Do not modify anything until you understand the current setup.
+
+## Goal
+
+Configure Vite so:
+
+Browser
+  ↓
+http://localhost:5173/api/interview
+  ↓
+Vite proxy
+  ↓
+http://localhost:3000/api/interview
+
+# Prompt #021 — Design the LLM Integration Boundary
+
+We have now completed the deterministic development pipeline:
+
+Candidate
+→ InterviewEngine
+→ QuestionGenerator
+→ AnswerEvaluator
+→ DecisionEngine
+→ next question
+
+The HTTP API and basic frontend integration are also working.
+
+The current implementations are intentionally deterministic development implementations:
+
+- MockQuestionGenerator
+- DevelopmentAnswerEvaluator
+- DevelopmentDecisionEngine
+
+Do NOT replace them with an LLM yet.
+
+The goal of this task is to study the project requirements and design the correct LLM integration boundary before implementation.
+
+## First: inspect the project
+
+Read these files completely before making changes:
+
+- `PRODUCT.md`
+- `INTERVIEW_ENGINE.md`
+- `AGENTS.md`
+- `PROMPTS.md`
+- `backend/src/interview/types.ts`
+- `backend/src/interview/engine.ts`
+- `backend/src/interview/evaluator.ts`
+- `backend/src/interview/decision.ts`
+- `backend/src/interview/session-store.ts`
+- `backend/src/api/interview-controller.ts`
+- `backend/src/app.ts`
+- `backend/package.json`
+
+Also inspect the frontend only where necessary to understand the current API contract.
+
+Do not rely on assumptions from previous conversations if the repository contains the authoritative specification.
+
+## Goal
+
+Determine exactly which responsibilities should belong to:
+
+1. deterministic backend code
+2. the LLM question planner/generator
+3. the LLM answer evaluator
+4. the deterministic decision/policy layer
+5. the InterviewEngine orchestration layer
+
+Do not implement the LLM provider yet.
+
+## Candidate profile → question planning
+
+Determine what information from `Candidate` should be supplied to the question-planning model.
+
+The first question should be capable of being personalized based on the candidate profile rather than always being:
+
+"Describe a real system you have built..."
+
+For example, if the candidate profile contains projects, skills, experience, or other relevant information, the planner should be able to use those details.
+
+Do not invent candidate fields that do not exist in the current domain model or specification.
+
+## Interview state → question planning
+
+Determine which parts of `InterviewState` are relevant to question generation.
+
+The planner may need information such as:
+
+- current stage
+- previous questions
+- covered topics
+- covered curriculum days
+- evidence
+- uncertainties
+- investigations
+- current focus
+- question count
+- candidate profile
+
+But do NOT blindly send the entire state to an LLM.
+
+Define a minimal structured planning context.
+
+The context should allow the model to understand:
+
+- what has already been asked
+- what has already been established
+- what remains uncertain
+- what the current investigation is
+- what stage the interview is in
+- what should be explored next
+
+## Question generator contract
+
+Review the existing:
+
+```ts
+interface QuestionGenerator
+```
+
+# Prompt #022 — Implement the LLM Boundary Without a Real Provider
+
+We have completed the architecture review for LLM integration.
+
+Do NOT connect to OpenAI, Anthropic, Gemini, or any external LLM provider yet.
+
+The goal of this task is to implement and test the internal LLM boundary using a deterministic fake provider.
+
+## First inspect
+
+Read:
+
+- `backend/src/interview/types.ts`
+- `backend/src/interview/engine.ts`
+- `backend/src/interview/evaluator.ts`
+- `backend/src/interview/decision.ts`
+- `backend/test/engine.test.ts`
+- `backend/test/evaluator.test.ts`
+- `backend/test/decision.test.ts`
+- `backend/package.json`
+- `PROMPTS.md`
+- `PRODUCT.md`
+- `INTERVIEW_ENGINE.md`
+
+Use the repository specification as authoritative.
+
+Do not modify anything until the current architecture is understood.
+
+---
+
+# Goal
+
+Introduce a small provider abstraction that allows the future system to use an LLM while keeping the existing deterministic implementations available for tests and fallback.
+
+The desired architecture is:
+
+```text
+InterviewEngine
+      │
+      ├── QuestionGenerator
+      │       ↓
+      │   LLM-backed generator
+      │
+      ├── AnswerEvaluator
+      │       ↓
+      │   LLM-backed evaluator
+      │
+      └── DecisionEngine
+              ↓
+        deterministic policy
+
+```
+# Prompt #022.1 — Harden the LLM Boundary
+
+Review the current LLM boundary implementation from Prompt #022.
+
+Files:
+
+- backend/src/interview/llm-provider.ts
+- backend/src/interview/llm-adapters.ts
+- backend/src/interview/fake-llm-provider.ts
+- backend/test/llm-adapter.test.ts
+
+Do NOT add a real LLM provider.
+
+Do NOT install AJV or another validation library yet unless the existing repository already uses one.
+
+The current adapters are too permissive and must be hardened.
+
+## Question validation
+
+`LLMQuestionGenerator` must validate the provider result rather than silently repair missing/invalid fields.
+
+Reject the provider result when:
+
+- object is missing
+- id is missing or not a string
+- text is missing or not a string
+- targetArea is missing or not a string
+- curriculumDays is missing, not an array, or contains invalid values
+- purpose is missing or not a string
+- difficulty is not one of the valid domain values
+- question ID already exists in `state.askedQuestions`
+
+Do not silently replace invalid provider values with defaults.
+
+Do not use `as any` to bypass validation.
+
+The generated question must not mutate interview state.
+
+## Evaluation validation
+
+`LLMEvaluator` must validate the provider result rather than normalize invalid values into valid-looking data.
+
+Reject when:
+
+- evaluationId is missing or invalid
+- evidence is not an array
+- confidence is not `low | medium | high`
+- evaluatedAt is invalid/missing if required by the domain
+- an evidence item is malformed
+- evidence confidence is invalid
+- evidence questionId does not exactly equal `context.question.id`
+
+Do NOT do this:
+
+```ts
+questionId: ev.questionId ?? context.question.id
